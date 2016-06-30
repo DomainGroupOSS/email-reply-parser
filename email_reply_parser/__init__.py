@@ -33,10 +33,7 @@ class EmailReplyParser(object):
         return EmailReplyParser.read(text).reply
 
 
-class EmailMessage(object):
-    """ An email message represents a parsed email body.
-    """
-
+class ParserRulesProvider(object):
     SIG_REGEX = re.compile(r'(--|__|-\w)|(^Sent from my (\w+\s*){1,3})')
     QUOTE_HDR_REGEX = re.compile('On.*wrote:$')
     QUOTED_REGEX = re.compile(r'(>+)')
@@ -45,7 +42,27 @@ class EmailMessage(object):
     MULTI_QUOTE_HDR_REGEX = re.compile(_MULTI_QUOTE_HDR_REGEX, re.DOTALL | re.MULTILINE)
     MULTI_QUOTE_HDR_REGEX_MULTILINE = re.compile(_MULTI_QUOTE_HDR_REGEX, re.DOTALL)
 
-    def __init__(self, text):
+    def __init__(self, signature_regex=SIG_REGEX,
+                 quote_header_regex=QUOTE_HDR_REGEX,
+                 quoted_regex=QUOTED_REGEX,
+                 header_regex=HEADER_REGEX,
+                 multi_quote_header_regex=MULTI_QUOTE_HDR_REGEX,
+                 multi_quote_header_regex_multiline=MULTI_QUOTE_HDR_REGEX_MULTILINE):
+        self.signature_regex = signature_regex
+        self.quoted_regex = quoted_regex
+        self.quote_header_regex = quote_header_regex
+        self.header_regex = header_regex
+        self.multi_quote_header_regex = multi_quote_header_regex
+        self.multi_quote_header_regex_multiline = multi_quote_header_regex_multiline
+
+
+class EmailMessage(object):
+    """ An email message represents a parsed email body.
+    """
+    DEFAULT_RULES = ParserRulesProvider()
+
+    def __init__(self, text, rules=DEFAULT_RULES):
+        self.rules = rules
         self.fragments = []
         self.fragment = None
         self.text = text.replace('\r\n', '\n')
@@ -60,9 +77,9 @@ class EmailMessage(object):
 
         self.found_visible = False
 
-        is_multi_quote_header = self.MULTI_QUOTE_HDR_REGEX_MULTILINE.search(self.text)
+        is_multi_quote_header = self.rules.multi_quote_header_regex_multiline.search(self.text)
         if is_multi_quote_header:
-            self.text = self.MULTI_QUOTE_HDR_REGEX.sub(is_multi_quote_header.groups()[0].replace('\n', ''), self.text)
+            self.text = self.rules.multi_quote_header_regex.sub(is_multi_quote_header.groups()[0].replace('\n', ''), self.text)
 
         # Fix any outlook style replies, with the reply immediately above the signature boundary line
         #   See email_2_2.txt for an example
@@ -95,12 +112,12 @@ class EmailMessage(object):
 
             line - a row of text from an email message
         """
-        is_quote_header = self.QUOTE_HDR_REGEX.match(line) is not None
-        is_quoted = self.QUOTED_REGEX.match(line) is not None
-        is_header = is_quote_header or self.HEADER_REGEX.match(line) is not None
+        is_quote_header = self.rules.quote_header_regex.match(line) is not None
+        is_quoted = self.rules.quoted_regex.match(line) is not None
+        is_header = is_quote_header or self.rules.header_regex.match(line) is not None
 
         if self.fragment and len(line.strip()) == 0:
-            if self.SIG_REGEX.match(self.fragment.lines[-1].strip()):
+            if self.rules.signature_regex.match(self.fragment.lines[-1].strip()):
                 self.fragment.signature = True
                 self._finish_fragment()
 
@@ -120,7 +137,7 @@ class EmailMessage(object):
 
             Returns True or False
         """
-        return self.QUOTE_HDR_REGEX.match(line[::-1]) is not None
+        return self.rules.quote_header_regex.match(line[::-1]) is not None
 
     def _finish_fragment(self):
         """ Creates fragment
